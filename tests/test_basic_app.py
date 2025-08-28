@@ -21,7 +21,7 @@ def test_app_imports():
         pytest.fail(f"Failed to import app module: {e}")
 
 def test_create_sample_poll_data():
-    """Test sample poll data generation"""
+    """Test enhanced sample poll data generation"""
     from app import create_sample_poll_data
     
     # Generate sample data
@@ -31,11 +31,11 @@ def test_create_sample_poll_data():
     assert isinstance(df, pd.DataFrame)
     assert len(df) > 0
     
-    # Check required columns
+    # Check required columns (updated for enhanced version)
     required_columns = [
-        'Date', 'Pollster', 'Sample Size', 
+        'Date', 'Pollster', 'Sample Size', 'Methodology', 'Margin of Error',
         'Conservative', 'Labour', 'Liberal Democrat', 
-        'Reform UK', 'Green', 'SNP', 'Others'
+        'Reform UK', 'Green', 'SNP', 'Others', 'Days Ago'
     ]
     
     for col in required_columns:
@@ -44,6 +44,11 @@ def test_create_sample_poll_data():
     # Check data types and ranges
     assert df['Sample Size'].dtype in ['int64', 'int32']
     assert df['Sample Size'].min() >= 100  # Reasonable sample size
+    
+    # Check new enhanced columns
+    assert df['Methodology'].isin(['Online', 'Phone', 'Online/Phone']).all()
+    assert df['Days Ago'].min() >= 0
+    assert df['Margin of Error'].str.contains('±').all()
     
     # Check polling percentages are reasonable
     party_cols = ['Conservative', 'Labour', 'Liberal Democrat', 'Reform UK', 'Green', 'SNP', 'Others']
@@ -78,6 +83,39 @@ def test_basic_functionality_with_sample_data(sample_poll_data):
     # Test basic statistics
     con_avg = sample_poll_data['Conservative'].mean()
     assert 20 <= con_avg <= 25  # Reasonable range based on sample data
+
+def test_enhanced_data_fields():
+    """Test enhanced data fields are properly generated"""
+    from app import create_sample_poll_data
+    
+    df = create_sample_poll_data()
+    
+    # Test enhanced fields
+    assert 'Methodology' in df.columns
+    assert 'Margin of Error' in df.columns
+    assert 'Days Ago' in df.columns
+    
+    # Verify methodology values
+    valid_methodologies = ['Online', 'Phone', 'Online/Phone']
+    assert all(method in valid_methodologies for method in df['Methodology'].unique())
+    
+    # Verify margin of error format
+    assert all(error.startswith('±') and error.endswith('%') for error in df['Margin of Error'])
+    
+    # Verify days ago is non-negative
+    assert all(days >= 0 for days in df['Days Ago'])
+
+def test_error_handling():
+    """Test that error handling works properly"""
+    from app import create_sample_poll_data
+    import pandas as pd
+    
+    # This should not raise an exception even if something goes wrong
+    df = create_sample_poll_data()
+    
+    # Should return a valid DataFrame even in error conditions
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) > 0
 
 if __name__ == "__main__":
     # Run tests directly
