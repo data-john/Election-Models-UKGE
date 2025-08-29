@@ -584,7 +584,7 @@ def main():
         # Enhanced table display with styling
         st.dataframe(
             display_data,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             height=400
         )
@@ -621,7 +621,7 @@ def main():
                 "Green": [6.0],
                 "SNP": [2.0]
             })
-            st.dataframe(fallback_data, use_container_width=True)
+            st.dataframe(fallback_data, width='stretch')
         except:
             st.error("Unable to load any data. Please refresh the page.")
     
@@ -659,8 +659,8 @@ def main():
                 pollster_avg = filtered_data.groupby('Pollster')[party_columns].mean().round(1)
                 
                 if not pollster_avg.empty:
-                    st.dataframe(pollster_avg, use_container_width=True)
-                    
+                    st.dataframe(pollster_avg, width='stretch')
+
                     # Show which pollster is most favorable to each party
                     st.markdown("**Most Favorable Pollsters:**")
                     for party in party_columns:
