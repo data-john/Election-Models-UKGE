@@ -45,7 +45,7 @@ A web-based application for modeling and predicting UK General Election outcomes
 - ✅ Docker containerization ready
 - ✅ Unit testing framework
 - ✅ **Streamlit Cloud deployment configuration**
-- 🔄 Domain configuration (www.electionmodels.com/UKGE)
+- 🔄 Domain configuration (ukge.electionmodels.com recommended)
 
 ### Coming Next (Sprint 1 Completion)
 - 🔄 Production deployment verification (Day 5)
@@ -136,6 +136,8 @@ MIT License - see LICENSE file for details.
 
 ## Live Demo
 
-🌐 **Production Application**: www.electionmodels.com/UKGE
-📊 **Status**: Deployment configured (Sprint 1 Day 4)
-🔧 **Infrastructure**: Streamlit Cloud with custom domain
+🌐 **Production Application**: ukge.electionmodels.com (recommended)  
+🔄 **Alternative Path**: electionmodels.com/UKGE (redirect setup)  
+📊 **Status**: Deployment ready, domain configuration in progress  
+🔧 **Infrastructure**: Streamlit Cloud with custom domain  
+📖 **Domain Setup Guide**: See [docs/DOMAIN_CONFIGURATION.md](docs/DOMAIN_CONFIGURATION.md)

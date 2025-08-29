@@ -67,9 +67,12 @@ debug_mode = false
 - [ ] Enable auto-deploy on main branch updates
 
 ### Domain Configuration  
-- [ ] Configure custom domain: www.electionmodels.com/UKGE
-- [ ] Update DNS settings
-- [ ] Verify SSL certificate
+- [ ] Choose domain approach: subdomain vs path-based (see DOMAIN_CONFIGURATION.md)
+- [ ] **Recommended**: Configure subdomain: ukge.electionmodels.com
+- [ ] **Alternative**: Set up redirect for electionmodels.com/UKGE → subdomain
+- [ ] Update DNS settings with CNAME record
+- [ ] Configure custom domain in Streamlit Cloud dashboard
+- [ ] Verify SSL certificate (automatic with Streamlit Cloud)
 - [ ] Test domain accessibility
 
 ### Post-Deployment
