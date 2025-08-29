@@ -82,6 +82,14 @@ debug_mode = false
 - [ ] Monitor resource usage
 - [ ] Update documentation
 
+## Deployment URL (Free Tier)
+- Your app is available at: **https://election-simulator.streamlit.app**
+- Custom domains (e.g., electionmodels.com) are NOT supported on the free tier.
+- Share the Streamlit Cloud URL with users.
+
+## Custom Domain (Paid Plans Only)
+- If you upgrade, see DOMAIN_CONFIGURATION.md for setup instructions.
+
 ## Troubleshooting
 
 ### Common Issues

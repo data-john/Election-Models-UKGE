@@ -136,8 +136,6 @@ MIT License - see LICENSE file for details.
 
 ## Live Demo
 
-🌐 **Production Application**: ukge.electionmodels.com (recommended)  
-🔄 **Alternative Path**: electionmodels.com/UKGE (redirect setup)  
-📊 **Status**: Deployment ready, domain configuration in progress  
-🔧 **Infrastructure**: Streamlit Cloud with custom domain  
-📖 **Domain Setup Guide**: See [docs/DOMAIN_CONFIGURATION.md](docs/DOMAIN_CONFIGURATION.md)
+🌐 **Production Application**: https://election-simulator.streamlit.app (Streamlit Cloud free tier)  
+🔧 **Custom domains**: NOT supported on free tier  
+📖 **Domain Setup Guide**: See [docs/DOMAIN_CONFIGURATION.md](docs/DOMAIN_CONFIGURATION.md) for paid plans

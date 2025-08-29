@@ -1,5 +1,18 @@
 # Domain Configuration Guide: electionmodels.com/UKGE
 
+## Important Update (Free Tier)
+**Streamlit Cloud Free Tier does NOT support custom domains.**
+
+- Your app will be available at a URL like:
+  **https://election-simulator.streamlit.app**
+- You cannot use electionmodels.com or any subdomain directly unless you upgrade to a paid plan.
+- For now, share the Streamlit Cloud URL with users.
+
+## If you upgrade to a paid plan
+- Follow the instructions below for custom domain setup.
+
+---
+
 ## Overview
 You own `electionmodels.com` and want `electionmodels.com/UKGE` to point to your Streamlit Cloud app.
 

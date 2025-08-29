@@ -91,7 +91,7 @@ Sprint Planning (Day 1) → Development (Days 2-5) → Review & Deploy (Day 6) �
 - Implement data caching with SQLite
 - Add data validation and error handling
 
-**Low Priority (Nice to Have)**
+**Low Priority (Nice to Have)
 - Multiple pollster source integration
 - Automated daily data refresh
 
@@ -483,3 +483,8 @@ Sprint Planning (Day 1) → Development (Days 2-5) → Review & Deploy (Day 6) �
 - **Launch**: Public announcement and marketing push
 
 This agile implementation plan ensures continuous value delivery while managing risk through early deployment and iterative improvement. Each sprint builds upon the previous work while maintaining a working application in production throughout the development process.
+
+## Future Task: Custom Domain Configuration
+- Revisit custom domain setup for electionmodels.com/UKGE after MVP launch or if upgrading to Streamlit Cloud paid plan
+- Track Streamlit Cloud feature updates for free tier domain support
+- Consider redirect or proxy solutions if required by stakeholders
