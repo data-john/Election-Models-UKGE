@@ -1,16 +1,6 @@
-# System packages required for Streamlit Cloud deployment
-# These packages will be installed automatically during deployment
-
-# Required for some scientific computing libraries
 build-essential
-
-# Required for data processing and web scraping
 libxml2-dev
 libxslt-dev
-
-# Required for some plotting libraries
 libgeos-dev
-
-# Required for network operations
 curl
 wget
