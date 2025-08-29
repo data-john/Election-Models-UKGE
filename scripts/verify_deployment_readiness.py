@@ -50,6 +50,43 @@ def check_deployment_files():
     
     return all_good
 
+def check_packages_format():
+    """Verify packages.txt format is correct for Streamlit Cloud"""
+    print("\n📦 Checking packages.txt Format...")
+    
+    try:
+        with open('packages.txt', 'r') as f:
+            lines = f.readlines()
+        
+        issues = []
+        for i, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line:  # Skip empty lines
+                continue
+            if line.startswith('#'):  # Comment lines not allowed
+                issues.append(f"Line {i}: Comments not allowed in packages.txt ('{line[:30]}...')")
+            elif ' ' in line and not line.startswith('# '):  # Spaces in package names
+                issues.append(f"Line {i}: Package names should not contain spaces ('{line}')")
+        
+        if issues:
+            print("❌ packages.txt format issues found:")
+            for issue in issues:
+                print(f"   {issue}")
+            print("   Fix: Remove all comment lines (starting with #)")
+            print("   Streamlit Cloud treats every line as a package to install")
+            return False
+        else:
+            package_count = len([l for l in lines if l.strip() and not l.strip().startswith('#')])
+            print(f"✅ packages.txt format correct ({package_count} packages)")
+            return True
+            
+    except FileNotFoundError:
+        print("❌ packages.txt not found")
+        return False
+    except Exception as e:
+        print(f"❌ Error checking packages.txt: {e}")
+        return False
+
 def verify_app_runs():
     """Verify the Streamlit app can start without errors"""
     print("\n🚀 Testing Application Startup...")
@@ -157,6 +194,7 @@ def main():
     # Run all checks
     checks = [
         ("Deployment Files", check_deployment_files),
+        ("Packages Format", check_packages_format),
         ("Streamlit Configuration", check_streamlit_config), 
         ("Requirements", check_requirements),
         ("Application Startup", verify_app_runs),

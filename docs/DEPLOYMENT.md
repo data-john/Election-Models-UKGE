@@ -86,6 +86,10 @@ debug_mode = false
 2. **Path Issues**: Ensure all file paths are relative to repository root
 3. **Memory Issues**: Monitor Streamlit Cloud resource usage
 4. **Domain Issues**: Verify DNS propagation (can take 24-48 hours)
+5. **packages.txt Format Error**: 
+   - ❌ **Issue**: `E: Unable to locate package #` errors during deployment
+   - ✅ **Solution**: Remove all comments from packages.txt - only package names, one per line
+   - **Note**: Streamlit Cloud treats every line as a package to install
 
 ### Health Check Endpoint
 The application includes built-in health monitoring accessible at:
