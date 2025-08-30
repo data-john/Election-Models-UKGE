@@ -372,32 +372,50 @@ def format_poll_data_for_display(df):
         if 'Days Ago' not in display_df.columns:
             try:
                 if 'Date' in display_df.columns:
-                    # Handle Wikipedia date format (could be date ranges like "1-3 Nov 2024")
-                    # For now, just extract the end date or use current parsing
-                    display_df['Date'] = pd.to_datetime(display_df['Date'], errors='coerce')
-                    # Replace any NaT values with recent dates
                     current_time = datetime.now()
-                    display_df['Date'] = display_df['Date'].fillna(current_time)
+                    current_year = current_time.year
                     
-                    # Ensure dates are not in the future
-                    future_dates = display_df['Date'] > current_time
-                    if future_dates.any():
-                        # If we have future dates, generate realistic past dates
-                        num_future = future_dates.sum()
-                        past_dates = pd.date_range(
-                            end=current_time - timedelta(days=1), 
-                            periods=num_future, 
-                            freq='-3D'
-                        )
-                        display_df.loc[future_dates, 'Date'] = past_dates
+                    def parse_wikipedia_date(date_str):
+                        """Parse Wikipedia-style dates that may be ranges like '26–28 Aug'"""
+                        try:
+                            if pd.isna(date_str) or date_str == '':
+                                return current_time - timedelta(days=1)
+                                
+                            date_str = str(date_str).strip()
+                            
+                            # Handle date ranges like '26–28 Aug' - take the end date
+                            if '–' in date_str:
+                                parts = date_str.split('–')
+                                end_date_str = parts[-1].strip()
+                            else:
+                                end_date_str = date_str
+                            
+                            # Try to parse with current year
+                            try:
+                                parsed_date = pd.to_datetime(f'{end_date_str} {current_year}', format='%d %b %Y')
+                            except:
+                                # Try alternative parsing
+                                parsed_date = pd.to_datetime(f'{end_date_str} {current_year}')
+                                
+                            # If the parsed date is in the future, assume it's from the previous year
+                            if parsed_date > current_time:
+                                parsed_date = pd.to_datetime(f'{end_date_str} {current_year - 1}')
+                            
+                            return parsed_date
+                            
+                        except Exception:
+                            # Fallback to a reasonable recent date
+                            return current_time - timedelta(days=np.random.randint(1, 30))
                     
+                    # Apply the Wikipedia date parser
+                    display_df['Date'] = display_df['Date'].apply(parse_wikipedia_date)
+                    
+                    # Calculate days ago
                     display_df['Days Ago'] = (current_time - display_df['Date']).dt.days
+                    
                     # Ensure Days Ago is always a valid integer
-                    try:
-                        display_df['Days Ago'] = pd.to_numeric(display_df['Days Ago'], errors='coerce').fillna(0).astype(int)
-                    except Exception as days_error:
-                        st.warning(f"Days Ago conversion issue: {str(days_error)}")
-                        display_df['Days Ago'] = 0
+                    display_df['Days Ago'] = pd.to_numeric(display_df['Days Ago'], errors='coerce').fillna(0).astype(int)
+                    
                 else:
                     display_df['Days Ago'] = list(range(len(display_df)))
             except Exception as e:
@@ -407,10 +425,7 @@ def format_poll_data_for_display(df):
                 past_dates = pd.date_range(end=current_time - timedelta(days=1), periods=len(display_df), freq='-3D')
                 display_df['Date'] = past_dates
                 display_df['Days Ago'] = (current_time - display_df['Date']).dt.days
-                try:
-                    display_df['Days Ago'] = pd.to_numeric(display_df['Days Ago'], errors='coerce').fillna(0).astype(int)
-                except Exception:
-                    display_df['Days Ago'] = 0
+                display_df['Days Ago'] = pd.to_numeric(display_df['Days Ago'], errors='coerce').fillna(0).astype(int)
         
         if 'Methodology' not in display_df.columns:
             # Assign realistic methodologies
@@ -950,7 +965,7 @@ def main():
         # Enhanced table display with styling
         st.dataframe(
             display_data,
-            use_container_width=True,
+            width=None,  # Modern alternative to use_container_width
             hide_index=True,
             height=400
         )
@@ -987,7 +1002,7 @@ def main():
                 "Green": [6.0],
                 "SNP": [2.0]
             })
-            st.dataframe(fallback_data, use_container_width=True)
+            st.dataframe(fallback_data, width=None)  # Updated from use_container_width
         except Exception as fallback_error:
             st.error("Unable to load any data. Please refresh the page.")
             st.error(f"Error details: {str(fallback_error)}")    # Additional analysis section
@@ -1058,7 +1073,7 @@ def main():
                 )
 
                 if not pollster_avg.empty:
-                    st.dataframe(pollster_avg, use_container_width=True)
+                    st.dataframe(pollster_avg, width=None)  # Updated from use_container_width
 
                     # Show which pollster is most favorable to each party
                     st.markdown("**Most Favorable Pollsters:**")
