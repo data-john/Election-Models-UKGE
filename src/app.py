@@ -456,6 +456,207 @@ def format_poll_data_for_display(df):
         return df
 
 
+def apply_enhanced_filters(poll_data, date_range, custom_start_date, custom_end_date,
+                         pollster_filter_type, selected_pollsters, excluded_pollsters,
+                         min_sample_size, max_sample_size, party_filters, quality_filters):
+    """
+    Apply comprehensive filtering to poll data based on user selections
+    Sprint 2 Day 4: Enhanced Poll Filtering UI Components
+    """
+    try:
+        filtered_data = poll_data.copy()
+        filter_stats = {
+            'original_count': len(poll_data),
+            'filters_applied': [],
+            'final_count': 0
+        }
+        
+        # Date range filtering
+        if date_range != "All available":
+            if date_range == "Custom" and custom_start_date and custom_end_date:
+                # Custom date range
+                start_date = pd.to_datetime(custom_start_date)
+                end_date = pd.to_datetime(custom_end_date) + pd.Timedelta(days=1)  # Include end date
+                mask = (pd.to_datetime(filtered_data['Date']) >= start_date) & \
+                       (pd.to_datetime(filtered_data['Date']) <= end_date)
+                filtered_data = filtered_data[mask]
+                filter_stats['filters_applied'].append(f"Custom date range: {custom_start_date} to {custom_end_date}")
+            else:
+                # Predefined date ranges
+                days_map = {
+                    "Last 3 days": 3, "Last 7 days": 7, "Last 14 days": 14, 
+                    "Last 30 days": 30, "Last 60 days": 60, "Last 90 days": 90
+                }
+                if date_range in days_map:
+                    days_limit = days_map[date_range]
+                    cutoff_date = datetime.now() - timedelta(days=days_limit)
+                    filtered_data = filtered_data[pd.to_datetime(filtered_data['Date']) >= cutoff_date]
+                    filter_stats['filters_applied'].append(f"Date filter: {date_range}")
+        
+        # Pollster filtering
+        if pollster_filter_type == "Select Specific" and selected_pollsters and "All Pollsters" not in selected_pollsters:
+            filtered_data = filtered_data[filtered_data['Pollster'].isin(selected_pollsters)]
+            filter_stats['filters_applied'].append(f"Selected pollsters: {len(selected_pollsters)}")
+        elif pollster_filter_type == "Exclude Specific" and excluded_pollsters:
+            filtered_data = filtered_data[~filtered_data['Pollster'].isin(excluded_pollsters)]
+            filter_stats['filters_applied'].append(f"Excluded pollsters: {len(excluded_pollsters)}")
+        
+        # Sample size filtering
+        if 'Sample Size' in filtered_data.columns:
+            # Convert to numeric, handling non-numeric values
+            sample_sizes = pd.to_numeric(filtered_data['Sample Size'], errors='coerce')
+            mask = (sample_sizes >= min_sample_size) & (sample_sizes <= max_sample_size)
+            # Only apply if we have valid sample size data
+            if mask.any():
+                filtered_data = filtered_data[mask]
+                if min_sample_size > 0 or max_sample_size < float('inf'):
+                    filter_stats['filters_applied'].append(f"Sample size: {min_sample_size}-{max_sample_size}")
+        
+        # Party support threshold filtering
+        if party_filters:
+            for party, min_threshold in party_filters.items():
+                if min_threshold > 0 and party in filtered_data.columns:
+                    # Convert percentage values to decimals if they're in percentage format
+                    party_values = pd.to_numeric(filtered_data[party], errors='coerce')
+                    # Handle both decimal (0-1) and percentage (0-100) formats
+                    if party_values.max() > 1:
+                        # Data is in percentage format
+                        threshold = min_threshold
+                    else:
+                        # Data is in decimal format
+                        threshold = min_threshold / 100
+                    
+                    filtered_data = filtered_data[party_values >= threshold]
+                    if len(filtered_data) < len(poll_data):  # Only log if filter had effect
+                        filter_stats['filters_applied'].append(f"{party} >= {min_threshold}%")
+        
+        # Quality filtering
+        if quality_filters.get('require_sample_size', False):
+            if 'Sample Size' in filtered_data.columns:
+                # Remove rows where sample size is null, 0, or invalid
+                sample_sizes = pd.to_numeric(filtered_data['Sample Size'], errors='coerce')
+                filtered_data = filtered_data[sample_sizes.notna() & (sample_sizes > 0)]
+                filter_stats['filters_applied'].append("Require sample size data")
+        
+        if quality_filters.get('require_methodology', False):
+            if 'Methodology' in filtered_data.columns:
+                # Remove rows where methodology is null or empty
+                filtered_data = filtered_data[
+                    filtered_data['Methodology'].notna() & 
+                    (filtered_data['Methodology'].astype(str).str.strip() != '') &
+                    (filtered_data['Methodology'].astype(str) != 'nan')
+                ]
+                filter_stats['filters_applied'].append("Require methodology data")
+        
+        # Outlier detection and removal
+        if quality_filters.get('exclude_outliers', False):
+            party_columns = ['Conservative', 'Labour', 'Liberal Democrat', 'Reform UK', 'Green', 'SNP']
+            original_len = len(filtered_data)
+            
+            for party in party_columns:
+                if party in filtered_data.columns:
+                    party_values = pd.to_numeric(filtered_data[party], errors='coerce')
+                    if party_values.notna().sum() > 5:  # Need at least 5 valid values
+                        mean_val = party_values.mean()
+                        std_val = party_values.std()
+                        # Remove values more than 2 standard deviations from mean
+                        outlier_mask = (
+                            (party_values < mean_val - 2 * std_val) | 
+                            (party_values > mean_val + 2 * std_val)
+                        )
+                        filtered_data = filtered_data[~outlier_mask]
+            
+            if len(filtered_data) < original_len:
+                filter_stats['filters_applied'].append(f"Removed {original_len - len(filtered_data)} outliers")
+        
+        filter_stats['final_count'] = len(filtered_data)
+        return filtered_data, filter_stats
+        
+    except Exception as e:
+        st.error(f"Error applying filters: {str(e)}")
+        return poll_data, {'original_count': len(poll_data), 'filters_applied': ['Filter error'], 'final_count': len(poll_data)}
+
+
+def update_dynamic_pollster_filters(poll_data, pollster_filter_type):
+    """
+    Dynamically update pollster filter options based on available data
+    Sprint 2 Day 4: Dynamic filter updates
+    """
+    try:
+        if poll_data.empty or 'Pollster' not in poll_data.columns:
+            return ["All Pollsters"], []
+        
+        available_pollsters = sorted(poll_data['Pollster'].unique())
+        
+        if pollster_filter_type == "Select Specific":
+            # Show multiselect for choosing specific pollsters
+            selected = st.multiselect(
+                "Select Pollsters to Include",
+                options=available_pollsters,
+                default=[],
+                help=f"Choose from {len(available_pollsters)} available pollsters"
+            )
+            return selected if selected else ["All Pollsters"], []
+            
+        elif pollster_filter_type == "Exclude Specific":
+            # Show multiselect for choosing pollsters to exclude
+            excluded = st.multiselect(
+                "Select Pollsters to Exclude",
+                options=available_pollsters,
+                default=[],
+                help=f"Choose pollsters to remove from {len(available_pollsters)} available"
+            )
+            return ["All Pollsters"], excluded
+        
+        return ["All Pollsters"], []
+        
+    except Exception as e:
+        st.warning(f"Error updating pollster filters: {str(e)}")
+        return ["All Pollsters"], []
+
+
+def display_filter_summary(filter_stats):
+    """
+    Display a summary of applied filters and their effects
+    Sprint 2 Day 4: Filter transparency and user feedback
+    """
+    try:
+        if filter_stats['filters_applied']:
+            with st.expander(f"🔍 Active Filters ({len(filter_stats['filters_applied'])})", expanded=False):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.metric(
+                        "Original Polls",
+                        filter_stats['original_count']
+                    )
+                    
+                with col2:
+                    st.metric(
+                        "After Filters",
+                        filter_stats['final_count'],
+                        delta=filter_stats['final_count'] - filter_stats['original_count']
+                    )
+                
+                st.markdown("**Applied Filters:**")
+                for filter_desc in filter_stats['filters_applied']:
+                    st.markdown(f"• {filter_desc}")
+                
+                # Filter effectiveness
+                retention_rate = (filter_stats['final_count'] / filter_stats['original_count']) * 100
+                if retention_rate < 50:
+                    st.warning(f"⚠️ Filters removed {100-retention_rate:.1f}% of polls. Consider relaxing criteria.")
+                elif retention_rate < 80:
+                    st.info(f"ℹ️ Filters kept {retention_rate:.1f}% of original polls.")
+                else:
+                    st.success(f"✅ Filters kept {retention_rate:.1f}% of original polls.")
+        else:
+            st.info("ℹ️ No filters applied - showing all available polls")
+            
+    except Exception as e:
+        st.error(f"Error displaying filter summary: {str(e)}")
+
+
 def create_sample_poll_data():
     """Create enhanced sample polling data with additional metadata"""
 
@@ -808,26 +1009,141 @@ def main():
             help="Number of recent polls to display in the table"
         )
 
-        # Filter options
-        st.markdown("### 🔍 Filters")
+        # Sprint 2 Day 4: Enhanced Poll Filtering UI Components
+        st.markdown("### 🔍 Advanced Poll Filters")
 
-        # Date range filter
-        date_range = st.selectbox(
-            "Time Period",
-            ["Last 7 days", "Last 14 days", "Last 30 days", "All available"],
-            index=2
+        # Advanced date filtering with custom range
+        st.markdown("#### 📅 Date Range")
+        date_filter_type = st.radio(
+            "Date Filter Type",
+            ["Quick Select", "Custom Range"],
+            horizontal=True,
+            help="Choose preset periods or set custom date range"
         )
-
-        # Pollster filter
-        try:
-            all_pollsters = ["All Pollsters"]  # Will be populated after data load
-            selected_pollsters = st.multiselect(
-                "Pollsters",
-                all_pollsters,
-                default=all_pollsters[:1]
+        
+        if date_filter_type == "Quick Select":
+            date_range = st.selectbox(
+                "Time Period",
+                ["Last 3 days", "Last 7 days", "Last 14 days", "Last 30 days", 
+                 "Last 60 days", "Last 90 days", "All available"],
+                index=3,
+                help="Select a predefined time period for filtering polls"
             )
-        except Exception:
-            selected_pollsters = ["All Pollsters"]
+            custom_start_date = None
+            custom_end_date = None
+        else:
+            date_range = "Custom"
+            col1, col2 = st.columns(2)
+            with col1:
+                custom_start_date = st.date_input(
+                    "Start Date",
+                    value=datetime.now() - timedelta(days=30),
+                    help="Select the earliest poll date to include"
+                )
+            with col2:
+                custom_end_date = st.date_input(
+                    "End Date", 
+                    value=datetime.now(),
+                    help="Select the latest poll date to include"
+                )
+
+        # Enhanced pollster filtering (will be populated dynamically)
+        st.markdown("#### 🏢 Pollster Selection")
+        pollster_filter_type = st.radio(
+            "Pollster Filter",
+            ["All Pollsters", "Select Specific", "Exclude Specific"],
+            horizontal=True,
+            help="Choose how to filter by pollster"
+        )
+        
+        # Initialize default pollster selection
+        selected_pollsters = ["All Pollsters"]
+        excluded_pollsters = []
+        
+        # Minimum sample size filter
+        st.markdown("#### 👥 Sample Size")
+        enable_sample_filter = st.checkbox("Filter by sample size", value=False)
+        if enable_sample_filter:
+            col1, col2 = st.columns(2)
+            with col1:
+                min_sample_size = st.number_input(
+                    "Minimum Sample Size",
+                    min_value=0,
+                    max_value=10000,
+                    value=1000,
+                    step=100,
+                    help="Filter polls with sample size >= this value"
+                )
+            with col2:
+                max_sample_size = st.number_input(
+                    "Maximum Sample Size", 
+                    min_value=0,
+                    max_value=50000,
+                    value=10000,
+                    step=500,
+                    help="Filter polls with sample size <= this value"
+                )
+        else:
+            min_sample_size = 0
+            max_sample_size = float('inf')
+
+        # Party support threshold filters
+        st.markdown("#### 📊 Party Support Filters")
+        enable_party_filters = st.checkbox("Filter by party support levels", value=False)
+        party_filters = {}
+        
+        if enable_party_filters:
+            st.markdown("**Set minimum support thresholds:**")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                party_filters['Conservative'] = st.slider(
+                    "Conservative min %", 0.0, 50.0, 0.0, 0.5,
+                    help="Only show polls where Conservative >= this %"
+                )
+                party_filters['Labour'] = st.slider(
+                    "Labour min %", 0.0, 60.0, 0.0, 0.5,
+                    help="Only show polls where Labour >= this %"
+                )
+            
+            with col2:
+                party_filters['Liberal Democrat'] = st.slider(
+                    "Lib Dem min %", 0.0, 30.0, 0.0, 0.5,
+                    help="Only show polls where Liberal Democrat >= this %"  
+                )
+                party_filters['Reform UK'] = st.slider(
+                    "Reform min %", 0.0, 30.0, 0.0, 0.5,
+                    help="Only show polls where Reform UK >= this %"
+                )
+                
+            with col3:
+                party_filters['Green'] = st.slider(
+                    "Green min %", 0.0, 20.0, 0.0, 0.5,
+                    help="Only show polls where Green >= this %"
+                )
+                party_filters['SNP'] = st.slider(
+                    "SNP min %", 0.0, 20.0, 0.0, 0.5,
+                    help="Only show polls where SNP >= this %"
+                )
+
+        # Data quality filters
+        st.markdown("#### ✅ Data Quality")
+        quality_filters = {}
+        quality_filters['require_sample_size'] = st.checkbox(
+            "Require sample size data", 
+            value=False,
+            help="Only show polls that include sample size information"
+        )
+        quality_filters['require_methodology'] = st.checkbox(
+            "Require methodology data",
+            value=False, 
+            help="Only show polls that include methodology information"
+        )
+        quality_filters['exclude_outliers'] = st.checkbox(
+            "Exclude statistical outliers",
+            value=False,
+            help="Remove polls with unusually high/low results (>2 standard deviations)"
+        )
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -906,34 +1222,37 @@ def main():
             st.error("No polling data could be generated. Please refresh the page.")
             return
 
-        # Update pollster filter options
-        if 'Pollster' in poll_data.columns:
-            # Note: In a real app, we'd update the sidebar dynamically here
-            pass
+        # Sprint 2 Day 4: Dynamic pollster filter update based on loaded data
+        if 'Pollster' in poll_data.columns and not poll_data.empty:
+            # Update pollster filters with actual data
+            with st.sidebar:
+                if pollster_filter_type != "All Pollsters":
+                    selected_pollsters, excluded_pollsters = update_dynamic_pollster_filters(
+                        poll_data, pollster_filter_type
+                    )
 
-        # Apply filters
-        filtered_data = poll_data.copy()
-
-        # Date range filtering
-        if date_range != "All available":
-            days_map = {"Last 7 days": 7, "Last 14 days": 14, "Last 30 days": 30}
-            days_limit = days_map[date_range]
-            cutoff_date = datetime.now() - timedelta(days=days_limit)
-            filtered_data = filtered_data[pd.to_datetime(filtered_data['Date']) >= cutoff_date]
-
-        # Pollster filtering
-        if selected_pollsters and "All Pollsters" not in selected_pollsters:
-            filtered_data = filtered_data[filtered_data['Pollster'].isin(selected_pollsters)]
+        # Sprint 2 Day 4: Apply enhanced filtering system
+        with st.spinner("🔄 Applying filters..."):
+            filtered_data, filter_stats = apply_enhanced_filters(
+                poll_data, date_range, custom_start_date, custom_end_date,
+                pollster_filter_type, selected_pollsters, excluded_pollsters,
+                min_sample_size, max_sample_size, party_filters, quality_filters
+            )
 
         if filtered_data.empty:
             st.warning("No polls match your current filters. Try adjusting your selection.")
+            display_filter_summary(filter_stats)
             return
 
-        # Success message for data load
+        # Sprint 2 Day 4: Display filter summary and effects
+        display_filter_summary(filter_stats)
+
+        # Success message for data load with enhanced details
         st.markdown(
             f'''<div class="success-message">
-                ✅ Successfully loaded {len(filtered_data)} polls from
+                ✅ Successfully loaded and filtered {len(filtered_data)} polls from
                 {filtered_data['Pollster'].nunique()} pollsters
+                <br><small>Data range: {filtered_data['Date'].min()} to {filtered_data['Date'].max()}</small>
             </div>''',
             unsafe_allow_html=True
         )        # Display enhanced summary metrics
