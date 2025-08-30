@@ -108,7 +108,7 @@ def test_data_processing(sample_data):
                 print(f"   Output columns: {list(processed_data.columns)}")
                 
                 # Check for required display columns
-                required_columns = ['Con', 'Lab', 'LD', 'Pollster', 'Sample Size', 'Methodology']
+                required_columns = ['Conservative', 'Labour', 'Liberal Democrat', 'Pollster', 'Sample Size', 'Methodology']
                 missing_cols = [col for col in required_columns if col not in processed_data.columns]
                 
                 if not missing_cols:
@@ -139,9 +139,9 @@ def test_cached_data_loading():
             print(f"✅ Cached data loading successful")
             print(f"   Loaded {len(cached_data)} polls with caching")
             print(f"   Sample data preview:")
-            print(f"   - Conservative: {cached_data['Con'].iloc[0]:.1f}%")
-            print(f"   - Labour: {cached_data['Lab'].iloc[0]:.1f}%")
-            print(f"   - Liberal Democrat: {cached_data['LD'].iloc[0]:.1f}%")
+            print(f"   - Conservative: {cached_data['Conservative'].iloc[0]:.1f}%")
+            print(f"   - Labour: {cached_data['Labour'].iloc[0]:.1f}%")
+            print(f"   - Liberal Democrat: {cached_data['Liberal Democrat'].iloc[0]:.1f}%")
             return True
         else:
             print("⚠️ Cached loading returned no data (may have fallen back to sample data)")

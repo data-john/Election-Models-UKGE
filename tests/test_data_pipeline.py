@@ -99,8 +99,9 @@ class TestDataFormattingPipeline:
         formatted_data = format_poll_data_for_display(raw_data)
         
         # Check that percentages are converted to display format (multiplied by 100)
-        assert formatted_data['Con'].iloc[0] == 22.0
-        assert formatted_data['Lab'].iloc[0] == 44.0
+        # and columns are renamed to standard names
+        assert formatted_data['Conservative'].iloc[0] == 22.0
+        assert formatted_data['Labour'].iloc[0] == 44.0
         
         # Check that required columns are added
         assert 'Pollster' in formatted_data.columns
@@ -158,11 +159,12 @@ class TestDataPipelineIntegration:
         assert len(processed_data) == 3
         
         # Check that percentages are converted to display format
-        assert all(processed_data['Con'] >= 20)  # Should be in percentage format
-        assert all(processed_data['Con'] <= 25)
+        # and columns are renamed to standard names
+        assert all(processed_data['Conservative'] >= 20)  # Should be in percentage format
+        assert all(processed_data['Conservative'] <= 25)
         
         # Check that all required columns exist
-        required_columns = ['Con', 'Lab', 'LD', 'SNP', 'Grn', 'Ref', 'Others', 
+        required_columns = ['Conservative', 'Labour', 'Liberal Democrat', 'SNP', 'Green', 'Reform UK', 'Others', 
                           'Pollster', 'Sample Size', 'Methodology', 'Margin of Error']
         for col in required_columns:
             assert col in processed_data.columns
