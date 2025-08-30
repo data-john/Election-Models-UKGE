@@ -21,3 +21,14 @@
 
 ## I3 
 The colours in the Polling Average Trend graph don't match the party colours of the cards above
+
+## I4
+Only on deployed version, error on app:
+📋 Recent Polling Data
+❌ Application Error: Invalid width value: None. Width must be either an integer (pixels), 'stretch', or 'content'.
+If this error persists, please refresh the page or contact support.
+Attempting to load minimal data...
+
+Unable to load any data. Please refresh the page.
+
+Error details: Invalid width value: None. Width must be either an integer (pixels), 'stretch', or 'content'.
