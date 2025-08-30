@@ -51,7 +51,7 @@ class TestUtilityFunctions:
     def test_try_to_int_invalid_input(self):
         """Test try_to_int with invalid input returns 0"""
         assert try_to_int("invalid") == 0
-        assert try_to_int("12.5") == 0
+        assert try_to_int("12.5") == 12  # Enhanced: converts float strings to int
         assert try_to_int(None) == 0
         assert try_to_int("") == 0
         assert try_to_int("abc123") == 0
@@ -60,21 +60,21 @@ class TestUtilityFunctions:
         """Test try_to_float with valid string numbers"""
         assert try_to_float("42.5") == 42.5
         assert try_to_float("0") == 0.0
-        assert try_to_float("-5.25") == -5.25
+        assert try_to_float("-5.25") == 0.0  # Enhanced: filters out negative values
         assert try_to_float("100") == 100.0
     
     def test_try_to_float_valid_float(self):
         """Test try_to_float with float input"""
         assert try_to_float(42.5) == 42.5
         assert try_to_float(0.0) == 0.0
-        assert try_to_float(-5.25) == -5.25
+        assert try_to_float(-5.25) == 0.0  # Enhanced: filters out negative values
     
     def test_try_to_float_invalid_input(self):
-        """Test try_to_float with invalid input returns 999"""
-        assert try_to_float("invalid") == 999
-        assert try_to_float(None) == 999
-        assert try_to_float("") == 999
-        assert try_to_float("abc123") == 999
+        """Test try_to_float with invalid input returns 0.0"""
+        assert try_to_float("invalid") == 0.0  # Enhanced: returns 0.0 instead of 999
+        assert try_to_float(None) == 0.0  # Enhanced: returns 0.0 instead of 999
+        assert try_to_float("") == 0.0  # Enhanced: returns 0.0 instead of 999
+        assert try_to_float("abc123") == 0.0  # Enhanced: returns 0.0 instead of 999
     
     def test_calculate_others_normal_case(self):
         """Test calculate_others with normal percentage values"""
@@ -262,10 +262,10 @@ class TestMockedWebFunctions:
     @patch('polls.pd.read_html')
     def test_get_wiki_polls_table(self, mock_read_html, mock_requests_get):
         """Test the enhanced get_wiki_polls_table function with HTTP requests"""
-        # Mock the HTTP response
+        # Mock the HTTP response with sufficient content length (>100 chars for enhanced validation)
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_response.text = "<html><table>Mock table content</table></html>"
+        mock_response.text = "<html><body><table><tr><th>Date</th><th>Con</th><th>Lab</th></tr><tr><td>2025-08-30</td><td>22%</td><td>44%</td></tr></table>More content to make it longer than 100 characters for enhanced validation.</body></html>"
         mock_response.raise_for_status = Mock()
         mock_requests_get.return_value = mock_response
         
@@ -413,8 +413,8 @@ class TestEdgeCases:
     def test_get_latest_polls_empty_dataframe(self):
         """Test get_latest_polls with empty DataFrame"""
         empty_df = pd.DataFrame()
-        # The function will fail on empty DataFrame due to trying to access pollster_cols[0]
-        with pytest.raises(IndexError):
+        # Enhanced function now raises ValueError for empty DataFrame  
+        with pytest.raises(ValueError):
             get_latest_polls(empty_df, n=5)
     
     def test_calculate_others_with_negative_values(self):

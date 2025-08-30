@@ -101,7 +101,7 @@ Sprint Planning (Day 1) → Development (Days 2-5) → Review & Deploy (Day 6) �
 3. **Day 3**: SQLite caching implementation
 4. **Day 4**: Poll filtering UI components
 5. **Day 5**: Error handling and edge cases
-6. **Day 6**: Production deployment and testing
+6. **Day 6**: Logging, production deployment and testing
 
 ### 3.7 Deliverables
 - Live polling data from Wikipedia

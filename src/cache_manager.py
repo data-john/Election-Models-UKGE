@@ -1,6 +1,7 @@
 """
 UK Election Simulator - SQLite Cache Manager
-Sprint 2 Day 3: SQLite caching implementation
+Sprint 2 Day 3: SQLite caching implementation with enhanced error handling
+Sprint 2 Day 5: Database resilience and error recovery
 
 This module provides persistent caching for polling data using SQLite database.
 Replaces/complements Streamlit's in-memory cache with disk-based persistence.
@@ -10,9 +11,10 @@ import sqlite3
 import pandas as pd
 import json
 import hashlib
-from datetime import datetime, timedelta
+import time
 import os
 import logging
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 
 # Set up logging
@@ -90,6 +92,55 @@ class PollDataCache:
             conn.close()
             logger.info(f"Cache database initialized at {self.db_path}")
             
+        except sqlite3.DatabaseError as e:
+            if "file is not a database" in str(e).lower() or "database disk image is malformed" in str(e).lower():
+                logger.warning(f"Database corruption detected during initialization: {e}")
+                try:
+                    # Attempt repair by recreating the database
+                    if os.path.exists(self.db_path):
+                        backup_path = f"{self.db_path}.corrupt_{int(time.time())}"
+                        os.rename(self.db_path, backup_path)
+                        logger.info(f"Moved corrupted database to {backup_path}")
+                    
+                    # Retry initialization with a clean database
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS poll_cache (
+                            cache_key TEXT PRIMARY KEY,
+                            data_json TEXT NOT NULL,
+                            url TEXT,
+                            params_json TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            expires_at TIMESTAMP NOT NULL,
+                            access_count INTEGER DEFAULT 0,
+                            last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
+                    
+                    cursor.execute('''
+                        CREATE INDEX IF NOT EXISTS idx_expires_at ON poll_cache(expires_at)
+                    ''')
+                    
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS cache_metadata (
+                            key TEXT PRIMARY KEY,
+                            value TEXT,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
+                    
+                    conn.commit()
+                    conn.close()
+                    logger.info("Database successfully repaired during initialization")
+                    
+                except Exception as repair_error:
+                    logger.error(f"Failed to repair corrupted database: {repair_error}")
+                    raise
+            else:
+                logger.error(f"Failed to initialize cache database: {e}")
+                raise
         except Exception as e:
             logger.error(f"Failed to initialize cache database: {e}")
             raise
@@ -103,66 +154,169 @@ class PollDataCache:
     
     def get(self, url: str, params: Dict[str, Any] = None) -> Optional[pd.DataFrame]:
         """
-        Retrieve cached data
+        Retrieve cached data with enhanced error handling
+        Sprint 2 Day 5: Enhanced database error handling and resilience
         
         Args:
             url: Source URL for the data
             params: Additional parameters used for caching key
             
         Returns:
-            Cached DataFrame if valid, None if not found/expired
+            Cached DataFrame if valid, None if not found/expired/error
         """
         if params is None:
             params = {}
+        
+        # Input validation
+        if not url or not isinstance(url, str):
+            logger.error("Invalid URL provided to cache get()")
+            return None
             
         cache_key = self._generate_cache_key(url, params)
         
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Check if cache entry exists and is not expired
-            cursor.execute('''
-                SELECT data_json, expires_at, access_count
-                FROM poll_cache 
-                WHERE cache_key = ? AND expires_at > CURRENT_TIMESTAMP
-            ''', (cache_key,))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                data_json, expires_at, access_count = result
+        # Database connection with retry logic
+        max_retries = 3
+        retry_delay = 0.1
+        
+        for attempt in range(max_retries):
+            try:
+                # Check if database file exists and is accessible
+                if not os.path.exists(self.db_path):
+                    logger.warning(f"Cache database does not exist: {self.db_path}")
+                    return None
                 
-                # Update access statistics
+                # Test database file permissions
+                if not os.access(self.db_path, os.R_OK):
+                    logger.error(f"Cache database is not readable: {self.db_path}")
+                    return None
+                
+                conn = sqlite3.connect(self.db_path, timeout=10.0)
+                conn.row_factory = sqlite3.Row  # Enable column access by name
+                cursor = conn.cursor()
+                
+                # Validate database schema
+                try:
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='poll_cache'")
+                    if not cursor.fetchone():
+                        logger.warning("Cache table does not exist, initializing...")
+                        conn.close()
+                        self._init_db()
+                        return None
+                except sqlite3.Error as e:
+                    logger.error(f"Database schema validation failed: {e}")
+                    conn.close()
+                    return None
+                
+                # Check if cache entry exists and is not expired
                 cursor.execute('''
-                    UPDATE poll_cache 
-                    SET access_count = access_count + 1, last_accessed = CURRENT_TIMESTAMP
-                    WHERE cache_key = ?
+                    SELECT data_json, expires_at, access_count
+                    FROM poll_cache 
+                    WHERE cache_key = ? AND expires_at > CURRENT_TIMESTAMP
                 ''', (cache_key,))
                 
-                conn.commit()
-                conn.close()
+                result = cursor.fetchone()
                 
-                # Deserialize data
-                data_dict = json.loads(data_json)
-                df = pd.DataFrame(data_dict)
-                
-                self.cache_hits += 1
-                logger.info(f"Cache HIT for key {cache_key[:8]}... (access #{access_count + 1})")
-                return df
-            else:
-                conn.close()
-                self.cache_misses += 1
-                logger.info(f"Cache MISS for key {cache_key[:8]}...")
+                if result:
+                    data_json, expires_at, access_count = result
+                    
+                    # Validate data_json is not empty or corrupted
+                    if not data_json or data_json.strip() == '':
+                        logger.warning(f"Empty data found in cache for key {cache_key[:8]}...")
+                        cursor.execute('DELETE FROM poll_cache WHERE cache_key = ?', (cache_key,))
+                        conn.commit()
+                        conn.close()
+                        return None
+                    
+                    # Update access statistics with error handling
+                    try:
+                        cursor.execute('''
+                            UPDATE poll_cache 
+                            SET access_count = access_count + 1, last_accessed = CURRENT_TIMESTAMP
+                            WHERE cache_key = ?
+                        ''', (cache_key,))
+                        conn.commit()
+                    except sqlite3.Error as e:
+                        logger.warning(f"Failed to update access statistics: {e}")
+                        # Continue with data retrieval even if stats update fails
+                    
+                    conn.close()
+                    
+                    # Deserialize data with comprehensive error handling
+                    try:
+                        data_dict = json.loads(data_json)
+                        if not isinstance(data_dict, list):
+                            logger.error(f"Invalid data format in cache: expected list, got {type(data_dict)}")
+                            return None
+                        
+                        df = pd.DataFrame(data_dict)
+                        
+                        # Validate DataFrame
+                        if df.empty:
+                            logger.warning(f"Empty DataFrame loaded from cache")
+                            return None
+                        
+                        # Basic data type validation
+                        if len(df.columns) == 0:
+                            logger.error(f"DataFrame has no columns")
+                            return None
+                        
+                        self.cache_hits += 1
+                        logger.info(f"Cache HIT for key {cache_key[:8]}... (access #{access_count + 1})")
+                        return df
+                        
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to deserialize cached data: {e}")
+                        # Remove corrupted cache entry
+                        try:
+                            conn = sqlite3.connect(self.db_path, timeout=5.0)
+                            cursor = conn.cursor()
+                            cursor.execute('DELETE FROM poll_cache WHERE cache_key = ?', (cache_key,))
+                            conn.commit()
+                            conn.close()
+                        except sqlite3.Error:
+                            pass  # Best effort cleanup
+                        return None
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to create DataFrame from cached data: {e}")
+                        return None
+                else:
+                    conn.close()
+                    self.cache_misses += 1
+                    logger.info(f"Cache MISS for key {cache_key[:8]}...")
+                    return None
+                    
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                    logger.warning(f"Database locked, retry {attempt + 1}/{max_retries}")
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                logger.error(f"Database operational error: {e}")
                 return None
                 
-        except Exception as e:
-            logger.error(f"Failed to retrieve from cache: {e}")
-            return None
+            except sqlite3.DatabaseError as e:
+                logger.error(f"Database error in cache get(): {e}")
+                # For database corruption, try to reinitialize
+                if "database disk image is malformed" in str(e).lower():
+                    logger.warning("Database appears corrupted, attempting repair...")
+                    try:
+                        self._repair_database()
+                    except Exception:
+                        logger.error("Database repair failed")
+                return None
+                
+            except Exception as e:
+                logger.error(f"Unexpected error in cache get(): {e}")
+                return None
+        
+        # If we get here, all retries failed
+        logger.error(f"Failed to retrieve cache after {max_retries} attempts")
+        return None
     
     def set(self, url: str, data: pd.DataFrame, params: Dict[str, Any] = None, ttl: int = None) -> bool:
         """
-        Store data in cache
+        Store data in cache with enhanced error handling and recovery
+        Sprint 2 Day 5: Enhanced database error handling and recovery
         
         Args:
             url: Source URL for the data
@@ -178,36 +332,112 @@ class PollDataCache:
         if ttl is None:
             ttl = self.default_ttl
             
+        # Input validation
+        if not url or not isinstance(url, str):
+            logger.error("Invalid URL provided to cache set()")
+            return False
+        
+        if data is None or not isinstance(data, pd.DataFrame):
+            logger.error("Invalid data provided to cache set()")
+            return False
+        
+        if data.empty:
+            logger.warning("Empty DataFrame provided to cache set()")
+            return False
+            
         cache_key = self._generate_cache_key(url, params)
         
-        try:
-            # Serialize dataframe
-            data_json = data.to_json(orient='records', date_format='iso')
-            params_json = json.dumps(params, sort_keys=True)
-            
-            # Calculate expiry time in UTC to match SQLite CURRENT_TIMESTAMP
-            expires_at = datetime.utcnow() + timedelta(seconds=ttl)
-            expires_at_str = expires_at.strftime('%Y-%m-%d %H:%M:%S')
-            
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Insert or replace cache entry
-            cursor.execute('''
-                INSERT OR REPLACE INTO poll_cache 
-                (cache_key, data_json, url, params_json, expires_at, access_count, last_accessed)
-                VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
-            ''', (cache_key, data_json, url, params_json, expires_at_str))
-            
-            conn.commit()
-            conn.close()
-            
-            logger.info(f"Cache SET for key {cache_key[:8]}... (TTL: {ttl}s)")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to store in cache: {e}")
-            return False
+        # Retry logic for database operations
+        max_retries = 3
+        retry_delay = 0.1
+        
+        for attempt in range(max_retries):
+            try:
+                # Serialize dataframe
+                try:
+                    data_json = data.to_json(orient='records', date_format='iso')
+                    params_json = json.dumps(params, sort_keys=True)
+                except Exception as e:
+                    logger.error(f"Failed to serialize data: {e}")
+                    return False
+                
+                # Validate serialized data
+                if not data_json or data_json.strip() == '':
+                    logger.error("Data serialization resulted in empty JSON")
+                    return False
+                
+                # Calculate expiry time in UTC to match SQLite CURRENT_TIMESTAMP
+                expires_at = datetime.utcnow() + timedelta(seconds=ttl)
+                expires_at_str = expires_at.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Database connection with enhanced error handling
+                try:
+                    conn = sqlite3.connect(self.db_path, timeout=10.0)
+                    cursor = conn.cursor()
+                    
+                    # Verify database schema before attempting insert
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='poll_cache'")
+                    if not cursor.fetchone():
+                        logger.warning("Cache table does not exist, initializing...")
+                        conn.close()
+                        self._init_db()
+                        # Retry connection after initialization
+                        conn = sqlite3.connect(self.db_path, timeout=10.0)
+                        cursor = conn.cursor()
+                    
+                    # Insert or replace cache entry
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO poll_cache 
+                        (cache_key, data_json, url, params_json, expires_at, access_count, last_accessed)
+                        VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+                    ''', (cache_key, data_json, url, params_json, expires_at_str))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    logger.info(f"Cache SET for key {cache_key[:8]}... (TTL: {ttl}s)")
+                    return True
+                    
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                        logger.warning(f"Database locked during set, retry {attempt + 1}/{max_retries}")
+                        time.sleep(retry_delay * (attempt + 1))
+                        continue
+                    elif "file is not a database" in str(e).lower():
+                        logger.error("Database file corrupted, attempting repair...")
+                        try:
+                            self._repair_database()
+                            # After repair, try once more
+                            if attempt < max_retries - 1:
+                                continue
+                        except Exception as repair_error:
+                            logger.error(f"Database repair failed: {repair_error}")
+                    
+                    logger.error(f"Database operational error: {e}")
+                    return False
+                    
+                except sqlite3.DatabaseError as e:
+                    logger.error(f"Database error in cache set(): {e}")
+                    if "database disk image is malformed" in str(e).lower():
+                        logger.warning("Database appears corrupted, attempting repair...")
+                        try:
+                            self._repair_database()
+                            if attempt < max_retries - 1:
+                                continue
+                        except Exception:
+                            logger.error("Database repair failed")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"Unexpected error in cache set() attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+        
+        # If we get here, all retries failed
+        logger.error(f"Failed to store in cache after {max_retries} attempts")
+        return False
     
     def invalidate(self, url: str = None, params: Dict[str, Any] = None) -> int:
         """
@@ -271,6 +501,40 @@ class PollDataCache:
         except Exception as e:
             logger.error(f"Failed to cleanup expired cache: {e}")
             return 0
+    
+    def _repair_database(self) -> bool:
+        """
+        Attempt to repair a corrupted database
+        Sprint 2 Day 5: Database corruption recovery
+        
+        Returns:
+            True if repair successful, False otherwise
+        """
+        try:
+            # Backup original file
+            backup_path = f"{self.db_path}.backup_{int(time.time())}"
+            if os.path.exists(self.db_path):
+                try:
+                    import shutil
+                    shutil.copy2(self.db_path, backup_path)
+                    logger.info(f"Backed up corrupted database to {backup_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to backup corrupted database: {e}")
+            
+            # Remove corrupted database
+            if os.path.exists(self.db_path):
+                os.remove(self.db_path)
+                logger.info("Removed corrupted database file")
+            
+            # Reinitialize database
+            self._init_db()
+            logger.info("Reinitialized database after corruption")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Database repair failed: {e}")
+            return False
     
     def get_stats(self) -> Dict[str, Any]:
         """

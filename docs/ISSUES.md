@@ -32,3 +32,12 @@ Attempting to load minimal data...
 Unable to load any data. Please refresh the page.
 
 Error details: Invalid width value: None. Width must be either an integer (pixels), 'stretch', or 'content'.
+
+## I5
+Pollsters names appear with a ref number from Wikpedia, this should be stripped.
+Find Out Now[3]
+Find Out Now[6]
+Lord Ashcroft Polls[10][a]
+Find Out Now[11]
+YouGov[12]
+Find Out Now[15]

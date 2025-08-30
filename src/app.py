@@ -180,39 +180,151 @@ st.markdown("""
 
 # Sprint 2 Day 3: SQLite caching implementation - replaced Streamlit cache
 
-# Keep Streamlit cache as backup for in-memory performance
 @st.cache_data(ttl=300)  # Reduced to 5 minutes as SQLite is primary cache
-def load_real_polling_data(max_polls=20):
+def load_real_polling_data(max_polls=20, fallback_enabled=True):
     """
-    Load real polling data from Wikipedia with SQLite caching and validation
-    Sprint 2 Day 3: Integrated SQLite persistent caching system
+    Load real polling data from Wikipedia with enhanced error handling and recovery
+    Sprint 2 Day 5: Comprehensive error handling and fallback mechanisms
     """
+    error_messages = []
+    retry_count = 0
+    max_retries = 2
+    
+    # Input validation
     try:
-        st.info("🔄 Loading polling data from cache or Wikipedia...")
+        if not isinstance(max_polls, int) or max_polls <= 0:
+            max_polls = 20
+            error_messages.append("⚠️ Invalid max_polls parameter, defaulting to 20")
         
-        # Use SQLite cached version with 1-hour TTL
-        raw_df = cached_get_latest_polls_from_html(
-            next_url, 
-            col_dict=next_col_dict, 
-            n=max_polls, 
-            allow_repeated_pollsters=False,
-            ttl=3600  # 1 hour SQLite cache
-        )
-        
-        if raw_df is None:
-            st.error("❌ Failed to load polling data from cache or Wikipedia")
-            return None
-        
-        # Data validation and processing
-        processed_df = process_and_validate_poll_data(raw_df)
-        
-        st.success(f"✅ Successfully loaded {len(processed_df)} polls from Wikipedia")
-        return processed_df
+        if max_polls > 50:
+            max_polls = 50
+            error_messages.append("⚠️ max_polls limited to 50 for performance")
         
     except Exception as e:
-        st.error(f"❌ Error loading real polling data: {str(e)}")
-        st.warning("🔄 Falling back to sample data...")
-        return None
+        error_messages.append(f"⚠️ Parameter validation error: {str(e)}")
+        max_polls = 20
+    
+    # Display any parameter warnings
+    for msg in error_messages:
+        st.warning(msg)
+    
+    # Main data loading with retry logic
+    while retry_count <= max_retries:
+        try:
+            # Show loading state
+            with st.spinner(f"🔄 Loading polling data from cache or Wikipedia... (attempt {retry_count + 1}/{max_retries + 1})"):
+                
+                # Test network connectivity first (simple check)
+                import urllib.request
+                try:
+                    urllib.request.urlopen('https://www.google.com', timeout=3)
+                    network_available = True
+                except Exception:
+                    network_available = False
+                    st.warning("⚠️ Limited network connectivity detected")
+                
+                # Use SQLite cached version with 1-hour TTL
+                raw_df = cached_get_latest_polls_from_html(
+                    next_url, 
+                    col_dict=next_col_dict, 
+                    n=max_polls, 
+                    allow_repeated_pollsters=False,
+                    ttl=3600  # 1 hour SQLite cache
+                )
+                
+                # Enhanced validation of raw data
+                if raw_df is None:
+                    raise ValueError("No data returned from scraper or cache")
+                
+                if not isinstance(raw_df, pd.DataFrame):
+                    raise TypeError(f"Expected DataFrame, got {type(raw_df)}")
+                
+                if raw_df.empty:
+                    raise ValueError("Empty DataFrame returned")
+                
+                if len(raw_df.columns) < 3:
+                    raise ValueError(f"Insufficient columns in data: {len(raw_df.columns)}")
+                
+                # Data validation and processing with enhanced error handling
+                try:
+                    processed_df = process_and_validate_poll_data(raw_df)
+                    
+                    if processed_df is None or processed_df.empty:
+                        raise ValueError("Data processing resulted in empty dataset")
+                    
+                    # Success - display results
+                    success_msg = f"✅ Successfully loaded {len(processed_df)} polls from Wikipedia"
+                    if not network_available:
+                        success_msg += " (from cache)"
+                    st.success(success_msg)
+                    
+                    # Display data quality info if there are warnings
+                    validation_result = validate_poll_data(processed_df)
+                    if validation_result.get('warnings'):
+                        with st.expander("ℹ️ Data Quality Information", expanded=False):
+                            st.info("The following data quality notes were detected:")
+                            for warning in validation_result['warnings'][:5]:  # Limit displayed warnings
+                                st.write(f"• {warning}")
+                            if len(validation_result['warnings']) > 5:
+                                st.write(f"... and {len(validation_result['warnings']) - 5} more")
+                    
+                    return processed_df
+                    
+                except Exception as processing_error:
+                    raise Exception(f"Data processing failed: {str(processing_error)}")
+                
+        except Exception as e:
+            error_msg = str(e)
+            retry_count += 1
+            
+            # Categorize error types for better user feedback
+            if "network" in error_msg.lower() or "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+                error_type = "🌐 Network"
+                user_msg = "Network connectivity issues"
+            elif "parse" in error_msg.lower() or "html" in error_msg.lower():
+                error_type = "📄 Data Parsing"  
+                user_msg = "Wikipedia page format may have changed"
+            elif "database" in error_msg.lower() or "cache" in error_msg.lower():
+                error_type = "💾 Cache"
+                user_msg = "Database cache issues"
+            elif "validation" in error_msg.lower():
+                error_type = "🔍 Data Quality"
+                user_msg = "Data validation issues"
+            else:
+                error_type = "❓ Unknown"
+                user_msg = "Unexpected error"
+            
+            # Display error based on retry attempt
+            if retry_count <= max_retries:
+                st.warning(f"{error_type} Error (attempt {retry_count}/{max_retries + 1}): {user_msg}")
+                with st.expander("🔧 Technical Details", expanded=False):
+                    st.code(error_msg)
+                    
+                # Wait briefly before retry (except for last attempt)
+                if retry_count < max_retries:
+                    import time
+                    time.sleep(1)
+            else:
+                # Final attempt failed
+                st.error(f"❌ {error_type} Error: Failed to load polling data after {max_retries + 1} attempts")
+                with st.expander("� Technical Details", expanded=False):
+                    st.code(f"Final error: {error_msg}")
+                break
+    
+    # If all attempts failed and fallback is enabled
+    if fallback_enabled:
+        st.warning("🔄 Attempting fallback to sample data...")
+        try:
+            sample_data = create_sample_poll_data()
+            if sample_data is not None and not sample_data.empty:
+                st.info("✅ Using sample data as fallback")
+                return sample_data
+            else:
+                st.error("❌ Sample data fallback also failed")
+        except Exception as fallback_error:
+            st.error(f"❌ Sample data fallback failed: {str(fallback_error)}")
+    
+    return None
 
 
 def process_and_validate_poll_data(raw_df):
@@ -244,51 +356,182 @@ def process_and_validate_poll_data(raw_df):
 
 def validate_poll_data(df):
     """
-    Validate poll data quality and completeness
-    Sprint 2 Day 2: Data validation component
+    Validate poll data quality and completeness with comprehensive edge case handling
+    Sprint 2 Day 5: Enhanced validation with edge case coverage
     """
     validation_results = {
         'is_valid': True,
         'warnings': [],
+        'errors': [],
         'stats': {}
     }
     
     try:
+        # Input validation
+        if df is None:
+            validation_results['is_valid'] = False
+            validation_results['errors'].append("DataFrame is None")
+            return validation_results
+        
+        if not isinstance(df, pd.DataFrame):
+            validation_results['is_valid'] = False
+            validation_results['errors'].append(f"Expected DataFrame, got {type(df)}")
+            return validation_results
+        
+        if df.empty:
+            validation_results['is_valid'] = False
+            validation_results['errors'].append("DataFrame is empty")
+            validation_results['stats'] = {
+                'total_polls': 0,
+                'unique_pollsters': 0,
+                'date_range': 'No data'
+            }
+            return validation_results
+        
         # Check for required columns
         expected_columns = ['Con', 'Lab', 'LD', 'SNP', 'Grn', 'Ref', 'Others']
-        missing_cols = [col for col in expected_columns if col not in df.columns]
+        available_columns = list(df.columns)
+        missing_cols = [col for col in expected_columns if col not in available_columns]
         
         if missing_cols:
             validation_results['warnings'].append(f"Missing columns: {missing_cols}")
-            validation_results['is_valid'] = False
+            # Don't mark as invalid for missing columns - might be different election data
         
-        # Check data quality
-        if not df.empty:
+        # Check for completely empty columns
+        numeric_columns = [col for col in expected_columns if col in df.columns]
+        for col in numeric_columns:
+            if df[col].isna().all():
+                validation_results['warnings'].append(f"Column '{col}' contains only missing values")
+            elif df[col].isna().sum() > len(df) * 0.5:  # More than 50% missing
+                validation_results['warnings'].append(f"Column '{col}' has {df[col].isna().sum()} missing values ({df[col].isna().sum()/len(df)*100:.1f}%)")
+        
+        # Enhanced data quality checks
+        if numeric_columns:
             # Check for reasonable polling percentages (between 0 and 1)
-            for col in expected_columns:
-                if col in df.columns:
-                    invalid_values = df[(df[col] < 0) | (df[col] > 1)][col]
-                    if not invalid_values.empty:
-                        validation_results['warnings'].append(f"Invalid percentages in {col}: {len(invalid_values)} rows")
+            for col in numeric_columns:
+                try:
+                    # Convert to numeric if possible, handling various formats
+                    numeric_series = pd.to_numeric(df[col], errors='coerce')
+                    
+                    # Check for non-numeric values
+                    non_numeric_count = numeric_series.isna().sum() - df[col].isna().sum()
+                    if non_numeric_count > 0:
+                        validation_results['warnings'].append(f"Column '{col}' has {non_numeric_count} non-numeric values")
+                    
+                    # Check for invalid ranges (only for non-NaN values)
+                    valid_numeric = numeric_series.dropna()
+                    if not valid_numeric.empty:
+                        # Check for negative values
+                        negative_count = (valid_numeric < 0).sum()
+                        if negative_count > 0:
+                            validation_results['warnings'].append(f"Column '{col}' has {negative_count} negative values")
+                        
+                        # Check for values > 100% (assuming percentage format)
+                        if valid_numeric.max() > 1:
+                            # Might be percentage format (e.g., 45 instead of 0.45)
+                            high_values = (valid_numeric > 100).sum()
+                            if high_values > 0:
+                                validation_results['warnings'].append(f"Column '{col}' has {high_values} values > 100")
+                            elif valid_numeric.max() > 1:
+                                validation_results['warnings'].append(f"Column '{col}' appears to be in percentage format (max: {valid_numeric.max():.1f})")
+                        
+                        # Check for extremely low values (might indicate data quality issues)
+                        very_low_values = (valid_numeric < 0.001).sum()
+                        if very_low_values > 0 and very_low_values < len(valid_numeric):  # Not all zeros
+                            validation_results['warnings'].append(f"Column '{col}' has {very_low_values} very low values (< 0.1%)")
+                            
+                except Exception as e:
+                    validation_results['warnings'].append(f"Error validating column '{col}': {str(e)}")
             
             # Check if polls roughly sum to 100% (allowing for rounding)
             if 'Total' in df.columns:
-                invalid_totals = df[(df['Total'] < 0.95) | (df['Total'] > 1.05)]
-                if not invalid_totals.empty:
-                    validation_results['warnings'].append(f"Invalid poll totals: {len(invalid_totals)} rows don't sum to ~100%")
-            
-            # Stats for validation
-            validation_results['stats'] = {
+                try:
+                    total_series = pd.to_numeric(df['Total'], errors='coerce')
+                    valid_totals = total_series.dropna()
+                    
+                    if not valid_totals.empty:
+                        # Check for reasonable totals
+                        invalid_low = (valid_totals < 0.95).sum()
+                        invalid_high = (valid_totals > 1.05).sum()
+                        
+                        if invalid_low > 0:
+                            validation_results['warnings'].append(f"{invalid_low} polls have totals < 95%")
+                        if invalid_high > 0:
+                            validation_results['warnings'].append(f"{invalid_high} polls have totals > 105%")
+                        
+                        # Statistical summary
+                        validation_results['stats']['total_range'] = f"{valid_totals.min():.3f} - {valid_totals.max():.3f}"
+                        validation_results['stats']['avg_total'] = f"{valid_totals.mean():.3f}"
+                        
+                except Exception as e:
+                    validation_results['warnings'].append(f"Error validating totals: {str(e)}")
+        
+        # Enhanced statistics
+        try:
+            validation_results['stats'].update({
                 'total_polls': len(df),
-                'unique_pollsters': len(df.index.unique()) if hasattr(df.index, 'unique') else 'Unknown',
-                'date_range': 'Available' if 'Date' in df.columns else 'Not available'
-            }
+                'total_columns': len(df.columns),
+                'numeric_columns': len(numeric_columns),
+                'missing_data_summary': {}
+            })
+            
+            # Pollster statistics
+            pollster_columns = [col for col in df.columns if 'poll' in col.lower() or 'company' in col.lower()]
+            if pollster_columns:
+                pollster_col = pollster_columns[0]  # Use first found pollster column
+                try:
+                    unique_pollsters = df[pollster_col].dropna().nunique()
+                    validation_results['stats']['unique_pollsters'] = unique_pollsters
+                    validation_results['stats']['pollster_column'] = pollster_col
+                except Exception:
+                    validation_results['stats']['unique_pollsters'] = 'Unable to determine'
+            else:
+                validation_results['stats']['unique_pollsters'] = 'No pollster column found'
+            
+            # Date range statistics
+            date_columns = [col for col in df.columns if 'date' in col.lower() or 'time' in col.lower()]
+            if date_columns:
+                date_col = date_columns[0]
+                try:
+                    # Attempt to parse dates
+                    dates = pd.to_datetime(df[date_col], errors='coerce').dropna()
+                    if not dates.empty:
+                        validation_results['stats']['date_range'] = f"{dates.min().strftime('%Y-%m-%d')} to {dates.max().strftime('%Y-%m-%d')}"
+                        validation_results['stats']['date_span_days'] = (dates.max() - dates.min()).days
+                    else:
+                        validation_results['stats']['date_range'] = 'Unable to parse dates'
+                except Exception:
+                    validation_results['stats']['date_range'] = 'Date parsing failed'
+            else:
+                validation_results['stats']['date_range'] = 'No date column found'
+                
+            # Missing data summary for each column
+            for col in df.columns:
+                missing_count = df[col].isna().sum()
+                if missing_count > 0:
+                    validation_results['stats']['missing_data_summary'][col] = {
+                        'count': missing_count,
+                        'percentage': f"{missing_count/len(df)*100:.1f}%"
+                    }
+        
+        except Exception as e:
+            validation_results['warnings'].append(f"Error calculating statistics: {str(e)}")
+        
+        # Final validation decision
+        critical_error_count = len(validation_results['errors'])
+        warning_count = len(validation_results['warnings'])
+        
+        if critical_error_count > 0:
+            validation_results['is_valid'] = False
+        elif warning_count > 10:  # Too many warnings might indicate serious data quality issues
+            validation_results['warnings'].append(f"High warning count ({warning_count}) may indicate data quality issues")
         
         return validation_results
         
     except Exception as e:
         validation_results['is_valid'] = False
-        validation_results['warnings'].append(f"Validation error: {str(e)}")
+        validation_results['errors'].append(f"Validation system error: {str(e)}")
+        validation_results['stats'] = {'total_polls': 0, 'error': 'Validation failed'}
         return validation_results
 
 
