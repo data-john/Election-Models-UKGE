@@ -13,6 +13,7 @@ import os
 # Add the src directory to Python path for importing polls module
 sys.path.append(os.path.dirname(__file__))
 from polls import get_latest_polls_from_html, next_url, next_col_dict
+from cache_manager import get_cache, cached_get_latest_polls_from_html
 
 # Page configuration
 st.set_page_config(
@@ -177,24 +178,30 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# Sprint 2 Day 2: Data Processing and Validation Pipeline Functions
+# Sprint 2 Day 3: SQLite caching implementation - replaced Streamlit cache
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour to reduce API calls
+# Keep Streamlit cache as backup for in-memory performance
+@st.cache_data(ttl=300)  # Reduced to 5 minutes as SQLite is primary cache
 def load_real_polling_data(max_polls=20):
     """
-    Load real polling data from Wikipedia with validation and error handling
-    Sprint 2 Day 2: Data processing and validation pipeline
+    Load real polling data from Wikipedia with SQLite caching and validation
+    Sprint 2 Day 3: Integrated SQLite persistent caching system
     """
     try:
-        st.info("🔄 Loading real polling data from Wikipedia...")
+        st.info("🔄 Loading polling data from cache or Wikipedia...")
         
-        # Use the polls.py functions to get real data
-        raw_df = get_latest_polls_from_html(
+        # Use SQLite cached version with 1-hour TTL
+        raw_df = cached_get_latest_polls_from_html(
             next_url, 
             col_dict=next_col_dict, 
             n=max_polls, 
-            allow_repeated_pollsters=False
+            allow_repeated_pollsters=False,
+            ttl=3600  # 1 hour SQLite cache
         )
+        
+        if raw_df is None:
+            st.error("❌ Failed to load polling data from cache or Wikipedia")
+            return None
         
         # Data validation and processing
         processed_df = process_and_validate_poll_data(raw_df)
@@ -769,8 +776,8 @@ def main():
 
         # Sprint status
         st.markdown("### 🚀 Development Status")
-        st.markdown("**Sprint 2, Day 2** - Data Processing & Validation Pipeline ⚡")
-        st.success("Real Wikipedia poll integration activated!")
+        st.markdown("**Sprint 2, Day 3** - SQLite Caching Implementation 💾")
+        st.success("Persistent SQLite cache system activated!")
 
         # Data source selection
         st.markdown("### 📊 Data Source")
@@ -824,6 +831,40 @@ def main():
 
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # Sprint 2 Day 3: Cache Management Section
+        st.markdown("### 💾 Cache Management")
+        cache = get_cache()
+        cache_stats = cache.get_stats()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Cache Hits", cache_stats.get('cache_hits', 0))
+            st.metric("Valid Entries", cache_stats.get('valid_entries', 0))
+        with col2:
+            st.metric("Hit Rate", f"{cache_stats.get('hit_rate', 0):.1%}")
+            st.metric("DB Size", f"{cache_stats.get('db_size_mb', 0):.1f} MB")
+        
+        # Cache management buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Refresh Cache", help="Clear expired entries and reload fresh data"):
+                expired_count = cache.cleanup_expired()
+                # Invalidate Wikipedia cache to force fresh data
+                cache.invalidate(next_url)
+                st.success(f"Cleaned {expired_count} expired entries and refreshed data")
+                st.rerun()
+        with col2:
+            if st.button("🗑️ Clear All Cache", help="Remove all cached data"):
+                cleared_count = cache.invalidate()
+                st.success(f"Cleared {cleared_count} cache entries")
+                st.rerun()
+        
+        # Cache status indicator
+        if cache_stats.get('valid_entries', 0) > 0:
+            st.success(f"✅ {cache_stats.get('valid_entries', 0)} active cache entries")
+        else:
+            st.info("ℹ️ Cache is empty - data will be fetched fresh")
+
         # Additional info
         with st.expander("ℹ️ About This Data"):
             st.markdown("""
@@ -833,7 +874,8 @@ def main():
             - Live polling data from Wikipedia's UK election polling pages
             - Automatically updated and validated
             - Includes metadata like sample sizes and methodologies
-            - Data cached for 1 hour to optimize performance
+            - Data cached persistently in SQLite database (1-hour TTL)
+            - Cache survives application restarts and provides faster loading
             
             **Sample Data:**
             - Generated with realistic UK polling distributions
@@ -841,7 +883,7 @@ def main():
             - Includes margin of error calculations
             - Simulates natural polling variation
 
-            **Sprint 2 Update:** Real data integration now live with validation pipeline!
+            **Sprint 2 Day 3 Update:** SQLite persistent caching system now active with cache management controls!
             """)
 
     # Main content with enhanced error handling
