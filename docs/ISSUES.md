@@ -65,5 +65,12 @@ Applied automatically in `format_poll_data_for_display()` so all pollster names 
 - "YouGov[12]" → "YouGov"
 - "Lord Ashcroft Polls[10][a]" → "Lord Ashcroft Polls"
 
-## I6
+## 📋 I6 - SPRINT 3
 Polling Average Trend graph shows multiple averages for the same date in some cases. Only one average should be displayed for each date - the average that includes all the polls from that date should be used.
+
+**Status:** IDENTIFIED - SPRINT 3
+**Context:** Edge case discovered during Sprint 2 Day 5 testing
+**Impact:** Potential data aggregation issues in trend calculations
+**Proposed Fix:** Implement date-based deduplication with latest timestamp priority
+**Files to Change:** `polls.py`, data processing pipeline
+**Tests:** Edge case testing for date handling
