@@ -1,6 +1,6 @@
 """
 UK Election Simulator - Main Application
-Sprint 2 Day 2: Data processing and validation pipeline with real Wikipedia data
+Sprint 2 Day 6: Production deployment with logging, bug fixes, and testing
 """
 
 import streamlit as st
@@ -9,11 +9,17 @@ import numpy as np
 from datetime import datetime, timedelta
 import sys
 import os
+import time
 
 # Add the src directory to Python path for importing polls module
 sys.path.append(os.path.dirname(__file__))
 from polls import get_latest_polls_from_html, next_url, next_col_dict
 from cache_manager import get_cache, cached_get_latest_polls_from_html
+from logging_config import setup_logging, get_logger, log_data_fetch, log_user_interaction, log_error_recovery, log_performance_metric
+
+# Initialize logging
+setup_logging('INFO')
+logger = get_logger(__name__)
 
 # Page configuration
 st.set_page_config(
@@ -224,6 +230,7 @@ def load_real_polling_data(max_polls=20, fallback_enabled=True):
                     st.warning("⚠️ Limited network connectivity detected")
                 
                 # Use SQLite cached version with 1-hour TTL
+                logger.info("Attempting to fetch polls data from cache or Wikipedia")
                 raw_df = cached_get_latest_polls_from_html(
                     next_url, 
                     col_dict=next_col_dict, 
@@ -234,16 +241,23 @@ def load_real_polling_data(max_polls=20, fallback_enabled=True):
                 
                 # Enhanced validation of raw data
                 if raw_df is None:
+                    log_data_fetch("Wikipedia/Cache", False, 0, "No data returned from scraper or cache")
                     raise ValueError("No data returned from scraper or cache")
                 
                 if not isinstance(raw_df, pd.DataFrame):
+                    log_data_fetch("Wikipedia/Cache", False, 0, f"Expected DataFrame, got {type(raw_df)}")
                     raise TypeError(f"Expected DataFrame, got {type(raw_df)}")
                 
                 if raw_df.empty:
+                    log_data_fetch("Wikipedia/Cache", False, 0, "Empty DataFrame returned")
                     raise ValueError("Empty DataFrame returned")
                 
                 if len(raw_df.columns) < 3:
+                    log_data_fetch("Wikipedia/Cache", False, len(raw_df), f"Insufficient columns: {len(raw_df.columns)}")
                     raise ValueError(f"Insufficient columns in data: {len(raw_df.columns)}")
+                
+                log_data_fetch("Wikipedia/Cache", True, len(raw_df), None)
+                logger.info(f"Successfully loaded {len(raw_df)} polls with {len(raw_df.columns)} columns")
                 
                 # Data validation and processing with enhanced error handling
                 try:
@@ -535,6 +549,36 @@ def validate_poll_data(df):
         return validation_results
 
 
+def clean_pollster_name(pollster_name):
+    """
+    Clean pollster names by removing Wikipedia reference numbers
+    Sprint 2 Day 6: Addressing Issue I5 - Strip Wikipedia references
+    
+    Examples:
+    - "Find Out Now[3]" -> "Find Out Now"
+    - "Lord Ashcroft Polls[10][a]" -> "Lord Ashcroft Polls"
+    - "YouGov[12]" -> "YouGov"
+    """
+    import re
+    
+    if pd.isna(pollster_name) or pollster_name is None or pollster_name == '':
+        return ""
+    
+    if not isinstance(pollster_name, str):
+        pollster_name = str(pollster_name)
+        if pollster_name == '<NA>' or pollster_name == 'nan':
+            return ""
+    
+    # Remove Wikipedia reference numbers in square brackets
+    # Pattern matches [number] or [letter] or combinations like [10][a]
+    cleaned_name = re.sub(r'\[[0-9]+\]\[[a-zA-Z]\]|\[[0-9]+\]|\[[a-zA-Z]\]', '', str(pollster_name))
+    
+    # Clean up any extra whitespace
+    cleaned_name = cleaned_name.strip()
+    
+    return cleaned_name
+
+
 def format_poll_data_for_display(df):
     """
     Format processed poll data for display in the application
@@ -589,6 +633,10 @@ def format_poll_data_for_display(df):
         if 'Pollster' not in display_df.columns:
             # Try to extract from index or create generic names
             display_df['Pollster'] = [f"Poll {i+1}" for i in range(len(display_df))]
+        
+        # Clean pollster names to remove Wikipedia reference numbers
+        if 'Pollster' in display_df.columns:
+            display_df['Pollster'] = display_df['Pollster'].apply(clean_pollster_name)
         
         if 'Sample Size' not in display_df.columns:
             # Use actual sample sizes if available, otherwise estimate
@@ -1173,22 +1221,110 @@ def display_latest_averages(df):
 
         # Create trend data for last 20 polls
         trend_data = df.head(20)[["Date"] + party_columns].copy()
+        
+        # Debug information
+        logger.info(f"Chart data: {len(trend_data)} polls, columns: {trend_data.columns.tolist()}")
+        
         trend_data["Date"] = pd.to_datetime(trend_data["Date"])
         trend_data = trend_data.sort_values("Date")
 
         # Calculate rolling average
         for party in party_columns:
-            trend_data[f"{party}_avg"] = (
-                trend_data[party].rolling(window=3, min_periods=1).mean()
+            if party in trend_data.columns:
+                trend_data[f"{party}_avg"] = (
+                    trend_data[party].rolling(window=3, min_periods=1).mean()
+                )
+            else:
+                logger.warning(f"Party column '{party}' not found in data")
+
+        # Display chart with consistent colors
+        avg_columns = [f"{party}_avg" for party in party_columns if f"{party}_avg" in trend_data.columns]
+        
+        if not avg_columns:
+            st.error("No valid party data found for chart")
+            logger.error(f"Available columns: {trend_data.columns.tolist()}")
+            return
+        
+        chart_data = trend_data.set_index("Date")[avg_columns]
+        # Map back to clean party names
+        column_mapping = {f"{party}_avg": party for party in party_columns if f"{party}_avg" in trend_data.columns}
+        chart_data = chart_data.rename(columns=column_mapping)
+        
+        logger.info(f"Chart will display {len(chart_data)} data points for {len(chart_data.columns)} parties")
+        
+        # Create Altair chart with matching party colors
+        import altair as alt
+        
+        # Prepare data for Altair (needs to be in long format)
+        chart_data_reset = chart_data.reset_index()
+        chart_data_long = pd.melt(
+            chart_data_reset, 
+            id_vars=['Date'], 
+            value_vars=list(chart_data.columns),
+            var_name='Party', 
+            value_name='Support'
+        )
+        
+        # Remove any NaN values that might cause display issues
+        chart_data_long = chart_data_long.dropna(subset=['Support'])
+        
+        logger.info(f"Long format chart data: {len(chart_data_long)} rows")
+        logger.info(f"Date range: {chart_data_long['Date'].min()} to {chart_data_long['Date'].max()}")
+        logger.info(f"Support range: {chart_data_long['Support'].min():.1f}% to {chart_data_long['Support'].max():.1f}%")
+        
+        # Display a sample of the data for debugging  
+        if len(chart_data_long) == 0:
+            st.error("No valid chart data after processing")
+            return
+        
+        # Create color mapping for consistency with party cards
+        # Only include parties that exist in both the data and the color mapping
+        available_parties = list(chart_data.columns)
+        party_colors_filtered = {party: color for party, color in party_colors.items() if party in available_parties}
+        
+        logger.info(f"Available parties for chart: {available_parties}")
+        logger.info(f"Party colors: {list(party_colors_filtered.keys())}")
+        
+        color_scale = alt.Scale(
+            domain=list(party_colors_filtered.keys()),
+            range=list(party_colors_filtered.values())
+        )
+        
+        # Create selection parameter for interactivity
+        party_selection = alt.selection_point(fields=['Party'])
+        
+        try:
+            # Create a simplified chart that should definitely work
+            chart = alt.Chart(chart_data_long).mark_line(
+                point=True,
+                strokeWidth=2
+            ).encode(
+                x=alt.X('Date:T', title='Date'),
+                y=alt.Y('Support:Q', title='Support %'),
+                color=alt.Color('Party:N', scale=color_scale, title='Party'),
+                tooltip=['Date:T', 'Party:N', 'Support:Q']
+            ).properties(
+                width=600,
+                height=350,
+                title='Polling Average Trend'
             )
-
-        # Display chart
-        chart_data = trend_data.set_index("Date")[
-            [f"{party}_avg" for party in party_columns]
-        ]
-        chart_data.columns = party_columns  # Clean column names for chart
-
-        st.line_chart(chart_data, height=400)
+            
+            st.altair_chart(chart, use_container_width=True)
+            logger.info("Altair chart displayed successfully")
+            
+        except Exception as chart_error:
+            logger.error(f"Altair chart failed: {str(chart_error)}")
+            st.warning("Interactive chart unavailable, showing simple chart instead")
+            
+            # Fallback to simple Streamlit line chart
+            simple_chart_data = chart_data.copy()
+            
+            # Make sure we have valid data for the simple chart
+            if not simple_chart_data.empty:
+                st.line_chart(simple_chart_data, height=400)
+                logger.info("Fallback line chart displayed")
+            else:
+                st.error("No data available for chart display")
 
     except Exception as e:
         st.error(f"Error calculating polling averages: {str(e)}")
@@ -1569,7 +1705,7 @@ def main():
         # Enhanced table display with styling
         st.dataframe(
             display_data,
-            width=None,  # Modern alternative to use_container_width
+            use_container_width=True,  # Use container width for responsive display
             hide_index=True,
             height=400
         )
@@ -1606,7 +1742,7 @@ def main():
                 "Green": [6.0],
                 "SNP": [2.0]
             })
-            st.dataframe(fallback_data, width=None)  # Updated from use_container_width
+            st.dataframe(fallback_data, use_container_width=True)  # Use container width for responsive display
         except Exception as fallback_error:
             st.error("Unable to load any data. Please refresh the page.")
             st.error(f"Error details: {str(fallback_error)}")    # Additional analysis section
@@ -1677,7 +1813,7 @@ def main():
                 )
 
                 if not pollster_avg.empty:
-                    st.dataframe(pollster_avg, width=None)  # Updated from use_container_width
+                    st.dataframe(pollster_avg, use_container_width=True)  # Use container width for responsive display
 
                     # Show which pollster is most favorable to each party
                     st.markdown("**Most Favorable Pollsters:**")
