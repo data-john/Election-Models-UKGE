@@ -64,3 +64,6 @@ Applied automatically in `format_poll_data_for_display()` so all pollster names 
 - "Find Out Now[3]" → "Find Out Now"
 - "YouGov[12]" → "YouGov"
 - "Lord Ashcroft Polls[10][a]" → "Lord Ashcroft Polls"
+
+## I6
+Polling Average Trend graph shows multiple averages for the same date in some cases. Only one average should be displayed for each date - the average that includes all the polls from that date should be used.
